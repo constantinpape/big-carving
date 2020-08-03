@@ -128,6 +128,7 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
 
         if graph is not None:
             assert weights is not None
+            assert len(weights) == graph.numberOfEdges
             uv_ids = graph.uvIds()
             viewer.add_labels(np.zeros_like(ws_base), scale=seg_scale_factor, name='seeds')
             ws_id = None
@@ -205,14 +206,15 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
         # def toggle_view_hidden(viewer):
         #     pass
 
-        @viewer.bind_key('m')
+        @viewer.bind_key('q')
         def update_mask(viewer):
             nonlocal mask_id
             seg_id = viewer.layers['segments'].selected_label
             if seg_id == mask_id:
                 return
             mask_id = seg_id
-            mask = (viewer.layers['segments'].data == seg_id).astype(viewer['mask'].data.dtype)
+
+            mask = (viewer.layers['segments'].data == mask_id).astype(viewer.layers['mask'].data.dtype)
             viewer.layers['mask'].data = mask
             if 'seeds' in viewer.layers:
                 viewer.layers['seeds'].data = np.zeros_like(ws_base)
@@ -230,8 +232,8 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
                 return
 
             if ws_id != mask_id or sub_graph is None:
-                print("Computing sub-graph ...")
-                sub_nodes = np.where(node_labels == mask_id)[0]
+                print("Computing sub-graph for", mask_id, " ...")
+                sub_nodes = np.where(node_labels == mask_id)[0].astype('uint64')
                 sub_edges, _ = graph.extractSubgraphFromNodes(sub_nodes, allowInvalidNodes=True)
                 sub_weights = weights[sub_edges]
 
@@ -243,20 +245,22 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
 
                 n_nodes = max_id + 1
                 sub_graph = nifty.graph.undirectedGraph(n_nodes)
-                sub_graph.insertEdges(uv_ids)
+                sub_graph.insertEdges(sub_uvs)
 
-                mask = viewer.layers['mask'].data
-                seeds = viewer.layers['seeds'].data
-                seeds[np.logical_not(mask)] = 0
+            mask = viewer.layers['mask'].data
+            seeds = viewer.layers['seeds'].data
+            seeds[np.logical_not(mask)] = 0
+            seed_ids = np.unique(seeds)[1:]
 
             seed_nodes = np.zeros(sub_graph.numberOfNodes, dtype='uint64')
-            for seed_id in np.unique(seeds, next_id):
-                seeded = np.unique(ws_base[mask == seed_id])
+            for seed_id in seed_ids:
+                seeded = np.unique(ws_base[seeds == seed_id])
                 if seeded[0] == 0:
                     seeded = seeded[1:]
                 seeded = nt.takeDict(mapping, seeded)
-                seed_nodes[seeded] = seed_id
+                seed_nodes[seeded] = (seed_id + next_id - 1)
 
+            print("Computing graph watershed")
             sub_labels = nifty.graph.edgeWeightedWatershedsSegmentation(sub_graph, seed_nodes, sub_weights)
             node_label_history.append(node_labels.copy())
 

@@ -106,5 +106,6 @@ def make_small_example_data():
 
 
 if __name__ == '__main__':
-    make_example_data()
+    compute_graph()
+    # make_example_data()
     # make_small_example_data()
