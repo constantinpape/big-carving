@@ -134,6 +134,7 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
             ws_id = None
             sub_graph, sub_weights = None, None
             sub_nodes, sub_edges = None, None
+            mapping = None
 
         # split of fragment from segment
         @viewer.bind_key('Shift-D')
@@ -214,6 +215,7 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
                 return
             mask_id = seg_id
 
+            print("Updating mask for", mask_id)
             mask = (viewer.layers['segments'].data == mask_id).astype(viewer.layers['mask'].data.dtype)
             viewer.layers['mask'].data = mask
             if 'seeds' in viewer.layers:
@@ -226,6 +228,7 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
             nonlocal node_label_history
             nonlocal sub_nodes, sub_edges
             nonlocal sub_graph, sub_weights
+            nonlocal mapping
 
             if mask_id is None:
                 print("Need to select segment to run watershed")
@@ -246,6 +249,7 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
                 n_nodes = max_id + 1
                 sub_graph = nifty.graph.undirectedGraph(n_nodes)
                 sub_graph.insertEdges(sub_uvs)
+                ws_id = mask_id
 
             mask = viewer.layers['mask'].data
             seeds = viewer.layers['seeds'].data
@@ -258,15 +262,23 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
                 if seeded[0] == 0:
                     seeded = seeded[1:]
                 seeded = nt.takeDict(mapping, seeded)
-                seed_nodes[seeded] = (seed_id + next_id - 1)
+                seed_nodes[seeded] = seed_id
 
             print("Computing graph watershed")
             sub_labels = nifty.graph.edgeWeightedWatershedsSegmentation(sub_graph, seed_nodes, sub_weights)
             node_label_history.append(node_labels.copy())
 
-            node_labels[sub_nodes] = sub_labels
-            seg = _seg_from_labels(node_labels)
-            viewer.layers['segments'].data = seg
+            node_labels[sub_nodes] = sub_labels + (next_id - 1)
+
+            mask_node_labels = np.zeros_like(node_labels)
+            mask_node_labels[sub_nodes] = sub_labels
+            mask = _seg_from_labels(mask_node_labels)
+            viewer.layers['mask'].data = mask
+
+            # TODO should also update the seg, but for now skip this to speed this up
+            # seg = _seg_from_labels(node_labels)
+            # viewer.layers['segments'].data = seg
+
             next_id = int(node_labels.max()) + 1
 
         # # undo the last split / merge action
@@ -274,6 +286,8 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
         def undo(viewer):
             nonlocal node_labels
             nonlocal node_label_history
+            if len(node_label_history) == 0:
+                return
             print("Undo last action")
             node_labels = node_label_history.pop()
             seg = _seg_from_labels(node_labels)
@@ -288,6 +302,11 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
                                        chunks=node_labels.shape, compression='gzip',
                                        dtype=node_labels.dtype)
                 ds[:] = node_labels
+
+        @viewer.bind_key('x')
+        def update_seg(viewer):
+            seg = _seg_from_labels(node_labels)
+            viewer.layers['segments'].data = seg
 
         # # print help
         # @viewer.bind_key()
