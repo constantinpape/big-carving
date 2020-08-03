@@ -1,7 +1,10 @@
 import os
 
 import napari
+import nifty
+import nifty.tools as nt
 import numpy as np
+import vigra
 
 from elf.io import open_file
 from elf.color import glasbey
@@ -92,7 +95,8 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
                             ws_path, ws_root, ws_scale,
                             node_label_path, node_label_key,
                             save_path, save_key, n_scales,
-                            seg_scale, seg_scale_factor):
+                            seg_scale, seg_scale_factor,
+                            graph=None, weights=None):
 
     ds_raw = _load_multiscale_ds(raw_path, raw_root,
                                  raw_scale, n_scales)
@@ -104,14 +108,15 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
     node_labels = _load_node_labes(node_label_path, node_label_key,
                                    save_path, save_key)
     next_id = int(node_labels.max()) + 1
+    mask_id = None
 
     node_label_history = []
+    ws_base = ds_ws[seg_scale][:]
 
     with napari.gui_qt():
 
         def _seg_from_labels(node_labels):
-            seg = ds_ws[seg_scale][:]
-            seg = merge_seg_from_node_labels(seg, node_labels)
+            seg = merge_seg_from_node_labels(ws_base, node_labels)
             return seg
 
         viewer = napari.Viewer()
@@ -119,6 +124,15 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
         viewer.add_labels(ds_ws, name='fragments', visible=False)
         seg = _seg_from_labels(node_labels)
         viewer.add_labels(seg, name='segments', scale=seg_scale_factor)
+        viewer.add_labels(np.zeros_like(ws_base), scale=seg_scale_factor, name='mask')
+
+        if graph is not None:
+            assert weights is not None
+            uv_ids = graph.uvIds()
+            viewer.add_labels(np.zeros_like(ws_base), scale=seg_scale_factor, name='seeds')
+            ws_id = None
+            sub_graph, sub_weights = None, None
+            sub_nodes, sub_edges = None, None
 
         # split of fragment from segment
         @viewer.bind_key('Shift-D')
@@ -190,6 +204,66 @@ def segmentation_correction(raw_path, raw_root, raw_scale,
         # @viewer.bind_key()
         # def toggle_view_hidden(viewer):
         #     pass
+
+        @viewer.bind_key('m')
+        def update_mask(viewer):
+            nonlocal mask_id
+            seg_id = viewer.layers['segments'].selected_label
+            if seg_id == mask_id:
+                return
+            mask_id = seg_id
+            mask = (viewer.layers['segments'].data == seg_id).astype(viewer['mask'].data.dtype)
+            viewer.layers['mask'].data = mask
+            if 'seeds' in viewer.layers:
+                viewer.layers['seeds'].data = np.zeros_like(ws_base)
+
+        @viewer.bind_key('w')
+        def watershed(viewer):
+            nonlocal ws_id, next_id
+            nonlocal node_labels
+            nonlocal node_label_history
+            nonlocal sub_nodes, sub_edges
+            nonlocal sub_graph, sub_weights
+
+            if mask_id is None:
+                print("Need to select segment to run watershed")
+                return
+
+            if ws_id != mask_id or sub_graph is None:
+                print("Computing sub-graph ...")
+                sub_nodes = np.where(node_labels == mask_id)[0]
+                sub_edges, _ = graph.extractSubgraphFromNodes(sub_nodes, allowInvalidNodes=True)
+                sub_weights = weights[sub_edges]
+
+                nodes_relabeled, max_id, mapping = vigra.analysis.relabelConsecutive(sub_nodes,
+                                                                                     start_label=0,
+                                                                                     keep_zeros=False)
+                sub_uvs = uv_ids[sub_edges]
+                sub_uvs = nt.takeDict(mapping, sub_uvs)
+
+                n_nodes = max_id + 1
+                sub_graph = nifty.graph.undirectedGraph(n_nodes)
+                sub_graph.insertEdges(uv_ids)
+
+                mask = viewer.layers['mask'].data
+                seeds = viewer.layers['seeds'].data
+                seeds[np.logical_not(mask)] = 0
+
+            seed_nodes = np.zeros(sub_graph.numberOfNodes, dtype='uint64')
+            for seed_id in np.unique(seeds, next_id):
+                seeded = np.unique(ws_base[mask == seed_id])
+                if seeded[0] == 0:
+                    seeded = seeded[1:]
+                seeded = nt.takeDict(mapping, seeded)
+                seed_nodes[seeded] = seed_id
+
+            sub_labels = nifty.graph.edgeWeightedWatershedsSegmentation(sub_graph, seed_nodes, sub_weights)
+            node_label_history.append(node_labels.copy())
+
+            node_labels[sub_nodes] = sub_labels
+            seg = _seg_from_labels(node_labels)
+            viewer.layers['segments'].data = seg
+            next_id = int(node_labels.max()) + 1
 
         # # undo the last split / merge action
         @viewer.bind_key('u')

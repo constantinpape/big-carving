@@ -5,12 +5,14 @@ import numpy as np
 from elf.io import open_file
 from mobie.import_data.util import downscale, compute_node_labels
 from cluster_tools.relabel import RelabelWorkflow
+from paintera_tools.util import compute_graph_and_weights
 
 
 in_path = '/home/pape/Work/data/cremi/example/sampleA.n5'
 raw_key = 'volumes/raw/s0'
 ws_key = 'volumes/segmentation/watershed'
 seg_key = 'volumes/segmentation/groundtruth'
+bd_key = 'volumes/boundaries'
 
 out_path = './data/data.n5'
 
@@ -42,6 +44,13 @@ def relabel(tmp_folder, target, max_jobs):
              assignment_path=tmp_path, assignment_key=tmp_key,
              output_path=out_path, output_key='watersheds/s0')
     assert luigi.build([t], local_scheduler=True)
+
+
+def compute_graph():
+    compute_graph_and_weights(in_path, bd_key,
+                              out_path, 'watersheds/s0', out_path,
+                              tmp_folder='tmp_graph', target='local',
+                              max_jobs=4)
 
 
 def make_example_data():
