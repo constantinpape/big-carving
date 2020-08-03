@@ -3,7 +3,7 @@ from nifty.ground_truth import overlap
 
 
 # TODO scalable implementation
-def merge_seg_from_node_labels(seg, node_labels, n_threads):
+def merge_seg_from_node_labels(seg, node_labels, n_threads=None):
     uniques, inverse = np.unique(seg, return_inverse=True)
     return np.array([node_labels[elem]
                      for elem in uniques])[inverse].reshape(seg.shape)
