@@ -88,6 +88,12 @@ def _load_node_labes(initial_path, initial_key, save_path, save_key):
     return node_labels.astype('uint32')
 
 
+def write_node_label_dataset(ws_path, ws_key, node_label_path, node_label_key):
+    with open_file(ws_path, 'a') as f:
+        ds = f[ws_key]
+        ds.attrs['node_label_dataset'] = [node_label_path, node_label_key]
+
+
 # For now: have two separate layers for watershed and merged segmentation.
 # Eventually it would be nice to handle this via properties and
 # switch the display between showing the watershed or label prop.
